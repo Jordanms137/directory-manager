@@ -6,22 +6,24 @@ A script to process a directory (recursively) for duplicate files or folders.
 It supports the following commands and options:
 
 Commands:
-  --report      : Generate a report of duplicate files or folders.
-                  (Defaults to searching for folders if --type is not specified.)
-  --move        : Moves duplicate files or folders to a directory named 'duplicate'
-                  (or a custom path provided with --location).
-  --move-out    : Moves files from nested directories to the current directory.
-                  If used with --type folder, moves the deepest (last) folder that contains files.
-  --delete      : Deletes duplicate files or folders in nested directories while keeping one unique copy.
-  --help        : Displays this help menu.
+  --report          : Generate a report of duplicate files or folders.
+                      (Defaults to searching for folders if --type is not specified.)
+  --move            : Moves duplicate files or folders to a directory named 'duplicate'
+                      (or a custom path provided with --location).
+  --move-out        : Moves files from nested directories to the current directory.
+                      If used with --type folder, moves the deepest (last) folder that contains files.
+  --delete          : Deletes duplicate files or folders in nested directories while keeping one unique copy.
+  --help            : Displays this help menu.
 
 Options:
-  --type        : Specifies the type of item to process (e.g., file, folder, .txt, .jpg, .zip).
-                  Defaults to 'folder' for --report, and 'file' for other commands.
-  --location    : Specifies a custom path for --report or --move (e.g., path=c:/app/duplicate).
-  --name        : Specifies a specific file or folder name to filter operations.
-  --cleanup     : When used with --report, generates an empty directories report only.
-                  When used with --delete, recursively deletes empty directories from the current directory.
+  --type            : Specifies the type of item to process (e.g., file, folder, .txt, .jpg, .zip).
+                      Defaults to 'folder' for --report and 'file' for other commands.
+  --location        : Specifies a custom path for --report or --move (e.g., path=c:/app/duplicate).
+  --name            : Specifies a specific file or folder name to filter operations.
+  --cleanup         : When used with --report, generates an empty directories report only;
+                      when used with --delete, recursively deletes empty directories from the current directory.
+  --search-location : Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data).
+                      If not provided, the current working directory is used.
                   
 IMPORTANT:
 • This script uses simple duplicate detection based on names. In real scenarios you might want to
@@ -55,7 +57,9 @@ Options:
   --location         Specifies a custom path for --report or --move (e.g., path=c:/app/duplicate).
   --name             Specifies a specific file or folder name to filter operations.
   --cleanup          When used with --report, generates an empty directories report only;
-                     when used with --delete, recursively deletes empty directories from the current directory.
+                     when used with --delete, recursively deletes empty directories from the base directory.
+  --search-location  Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data).
+                     If not provided, the current working directory is used.
                      
 Examples:
   python duplicate_processor.py --report --type file --location path=c:/app/duplicate
@@ -66,6 +70,7 @@ Examples:
   python duplicate_processor.py --name myfile.txt --report
   python duplicate_processor.py --report --cleanup
   python duplicate_processor.py --delete --cleanup
+  python duplicate_processor.py --report --search-location path=/opt/var/data
     """
     print(help_text)
 
@@ -143,7 +148,6 @@ def move_duplicates(duplicates, destination, item_type):
     """
     os.makedirs(destination, exist_ok=True)
     for name, paths in duplicates.items():
-        # Keep the first occurrence; move the rest.
         for path in paths[1:]:
             try:
                 dest_path = os.path.join(destination, os.path.basename(path))
@@ -304,7 +308,8 @@ def main():
     parser.add_argument("--type", type=str, help="Specifies the type of item to process (e.g., file, folder, .txt, .jpg, .zip)")
     parser.add_argument("--location", type=str, help="Specifies a custom path for report or move (e.g., path=c:/app/duplicate)")
     parser.add_argument("--name", type=str, help="Specifies a specific file or folder name to filter operations")
-    parser.add_argument("--cleanup", action="store_true", help="If used with --report, generates an empty directories report only; if used with --delete, recursively deletes empty directories from the current directory")
+    parser.add_argument("--cleanup", action="store_true", help="If used with --report, generates an empty directories report only; if used with --delete, recursively deletes empty directories from the base directory")
+    parser.add_argument("--search-location", type=str, help="Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data). If not provided, the current working directory is used.")
     
     args = parser.parse_args()
 
@@ -315,7 +320,14 @@ def main():
     if args.cleanup and not (args.report or args.delete):
         print("Warning: The --cleanup option is only supported with --report and --delete commands. Ignoring --cleanup.")
 
-    base_dir = os.getcwd()
+    # Use provided search-location if available; otherwise, use current working directory.
+    if args.search_location:
+        base_dir = parse_location(args.search_location)
+        if not os.path.isdir(base_dir):
+            print(f"Error: Provided search location '{base_dir}' is not a valid directory.")
+            sys.exit(1)
+    else:
+        base_dir = os.getcwd()
 
     ext_filter = None
     if args.type:
