@@ -168,14 +168,21 @@ def delete_duplicates(duplicates, item_type):
     Uses os.remove for files and shutil.rmtree for folders.
     """
     for name, paths in duplicates.items():
+        # Keep the first occurrence; delete the rest.
         for path in paths[1:]:
             try:
                 if item_type == "folder":
-                    shutil.rmtree(path)
-                    print(f"Deleted folder: {path}")
+                    if os.path.exists(path):
+                        shutil.rmtree(path)
+                        print(f"Deleted folder: {path}")
+                    else:
+                        print(f"Folder not found (skipping deletion): {path}")
                 else:
-                    os.remove(path)
-                    print(f"Deleted file: {path}")
+                    if os.path.exists(path):
+                        os.remove(path)
+                        print(f"Deleted file: {path}")
+                    else:
+                        print(f"File not found (skipping deletion): {path}")
             except Exception as e:
                 print(f"Error deleting {path}: {e}")
 
