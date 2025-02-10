@@ -19,12 +19,14 @@ Commands:
 Options:
   --type            : Specifies the type of item to process (e.g., file, folder, .txt, .jpg, .zip).
                       Defaults to 'folder' for --report and 'file' for other commands.
-  --location        : Specifies a custom path for --report, --move, or --consolidate (e.g., path=c:/app/xxx).
+  --location        : Specifies a custom path for report, move, or consolidate (e.g., path=c:/app/xxx).
   --name            : Specifies a specific file or folder name to filter operations.
   --cleanup         : When used with --report, generates an empty directories report only;
                       when used with --delete, recursively deletes empty directories from the base directory.
   --search-location : Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data).
                       If not provided, the current working directory is used.
+  --all             : When used with --delete, deletes ALL files/folders of the specified type from the base and nested directories.
+                      When used with --move, moves ALL files/folders of the specified type from the base and nested directories.
                   
 IMPORTANT:
 • This script uses simple duplicate detection based on names.
@@ -61,13 +63,17 @@ Options:
                      when used with --delete, recursively deletes empty directories from the base directory.
   --search-location  Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data).
                      If not provided, the current working directory is used.
-
+  --all              When used with --delete, deletes ALL files/folders of the specified type;
+                     when used with --move, moves ALL files/folders of the specified type.
+                     
 Examples:
   python duplicate_processor.py --report --type file --location path=c:/app/reports
   python duplicate_processor.py --report
   python duplicate_processor.py --move --type .txt --location path=c:/app/xxx
   python duplicate_processor.py --move-out --type folder
   python duplicate_processor.py --delete --type .jpg
+  python duplicate_processor.py --delete --all --type .txt
+  python duplicate_processor.py --move --all --type .txt --location path=c:/app/xxx
   python duplicate_processor.py --name myfile.txt --report
   python duplicate_processor.py --report --cleanup
   python duplicate_processor.py --delete --cleanup
@@ -142,7 +148,7 @@ def generate_report(duplicates, report_location):
 
 def move_duplicates(duplicates, destination, item_type):
     """
-    Moves duplicates (all but the first occurrence in each group) to the destination folder.
+    Moves duplicate items (all but the first occurrence in each group) to the destination folder.
     Checks that the source exists before moving.
     """
     os.makedirs(destination, exist_ok=True)
@@ -163,6 +169,50 @@ def move_duplicates(duplicates, destination, item_type):
                 print(f"Moved: {path} -> {dest_path}")
             except Exception as e:
                 print(f"Error moving {path}: {e}")
+
+def move_all_items(results, destination):
+    """
+    Moves all items found in the provided results dictionary to the destination.
+    This is used when --all is provided.
+    """
+    os.makedirs(destination, exist_ok=True)
+    for name, paths in results.items():
+        for path in paths:
+            if not os.path.exists(path):
+                print(f"Source not found (already moved or deleted): {path}")
+                continue
+            try:
+                dest_path = os.path.join(destination, os.path.basename(path))
+                if os.path.exists(dest_path):
+                    base, ext = os.path.splitext(os.path.basename(path))
+                    counter = 1
+                    while os.path.exists(os.path.join(destination, f"{base}_{counter}{ext}")):
+                        counter += 1
+                    dest_path = os.path.join(destination, f"{base}_{counter}{ext}")
+                shutil.move(path, dest_path)
+                print(f"Moved: {path} -> {dest_path}")
+            except Exception as e:
+                print(f"Error moving {path}: {e}")
+
+def delete_all_items(results, item_type):
+    """
+    Deletes all items found in the provided results dictionary.
+    This is used when --all is provided with --delete.
+    """
+    for name, paths in results.items():
+        for path in paths:
+            if not os.path.exists(path):
+                print(f"Source not found (already moved or deleted): {path}")
+                continue
+            try:
+                if item_type == "folder":
+                    shutil.rmtree(path)
+                    print(f"Deleted folder: {path}")
+                else:
+                    os.remove(path)
+                    print(f"Deleted file: {path}")
+            except Exception as e:
+                print(f"Error deleting {path}: {e}")
 
 def move_out_files(base_dir):
     """
@@ -346,7 +396,8 @@ def main():
     parser.add_argument("--name", type=str, help="Specifies a specific file or folder name to filter operations")
     parser.add_argument("--cleanup", action="store_true", help="If used with --report, generates an empty directories report only; if used with --delete, recursively deletes empty directories from the base directory")
     parser.add_argument("--search-location", type=str, help="Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data). If not provided, the current working directory is used.")
-    
+    parser.add_argument("--all", action="store_true", help="If used with --delete, deletes ALL items of the specified type; if used with --move, moves ALL items of the specified type.")
+
     args = parser.parse_args()
 
     if args.help:
@@ -382,19 +433,17 @@ def main():
 
     name_filter = args.name if args.name else None
 
-    # For --report, default destination is the "reports" directory.
+    # Determine destination directory.
     if args.report:
         if args.location:
             destination = parse_location(args.location)
         else:
             destination = os.path.join(os.getcwd(), "reports")
-    # For --consolidate, default destination is the "consolidated" directory.
     elif args.consolidate:
         if args.location:
             destination = parse_location(args.location)
         else:
             destination = os.path.join(os.getcwd(), "consolidated")
-    # Otherwise, use location option if provided; else default to "duplicate" for move operations.
     else:
         if args.location:
             destination = parse_location(args.location)
@@ -419,17 +468,39 @@ def main():
             else:
                 print("No duplicates found.")
     elif args.move:
-        if item_type == "folder":
-            results = scan_folders(base_dir, name_filter)
+        if args.all:
+            # Move ALL items of the specified type.
+            if item_type == "folder":
+                results = scan_folders(base_dir, name_filter)
+            else:
+                results = scan_files(base_dir, name_filter, ext_filter)
+            if results:
+                move_all_items(results, destination)
+            else:
+                print("No items found to move.")
         else:
-            results = scan_files(base_dir, name_filter, ext_filter)
-        duplicates = {name: paths for name, paths in results.items() if len(paths) > 1}
-        if duplicates:
-            move_duplicates(duplicates, destination, item_type)
-        else:
-            print("No duplicates found to move.")
+            # Move duplicates only.
+            if item_type == "folder":
+                results = scan_folders(base_dir, name_filter)
+            else:
+                results = scan_files(base_dir, name_filter, ext_filter)
+            duplicates = {name: paths for name, paths in results.items() if len(paths) > 1}
+            if duplicates:
+                move_duplicates(duplicates, destination, item_type)
+            else:
+                print("No duplicates found to move.")
     elif args.delete:
-        if args.cleanup:
+        if args.all:
+            # Delete ALL items of the specified type.
+            if item_type == "folder":
+                results = scan_folders(base_dir, name_filter)
+            else:
+                results = scan_files(base_dir, name_filter, ext_filter)
+            if results:
+                delete_all_items(results, item_type)
+            else:
+                print("No items found to delete.")
+        elif args.cleanup:
             delete_empty_directories_recursive(base_dir, base_dir)
         else:
             if item_type == "folder":
@@ -444,8 +515,12 @@ def main():
                             print(f"Source not found (already moved or deleted): {path}")
                             continue
                         try:
-                            shutil.rmtree(path)
-                            print(f"Deleted folder: {path}")
+                            if item_type == "folder":
+                                shutil.rmtree(path)
+                                print(f"Deleted folder: {path}")
+                            else:
+                                os.remove(path)
+                                print(f"Deleted file: {path}")
                         except Exception as e:
                             print(f"Error deleting {path}: {e}")
             else:
@@ -456,7 +531,6 @@ def main():
         else:
             move_out_files(base_dir)
     elif args.consolidate:
-        # The --consolidate command only supports --type .txt.
         if not (args.type and args.type.lower() == ".txt"):
             print("Error: The --consolidate command only supports --type .txt.")
             print_help()
