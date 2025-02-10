@@ -8,26 +8,26 @@ It supports the following commands and options:
 Commands:
   --report          : Generate a report of duplicate files or folders.
                       (Defaults to searching for folders if --type is not specified.)
-  --move            : Moves duplicate files or folders to a directory named 'duplicate'
-                      (or a custom path provided with --location).
+  --move            : Moves duplicate files or folders to a directory.
   --move-out        : Moves files from nested directories to the current directory.
                       If used with --type folder, moves the deepest (last) folder that contains files.
   --delete          : Deletes duplicate files or folders in nested directories while keeping one unique copy.
+  --consolidate     : Consolidates all .txt files into one file with unique data.
+                      This command only works with --type .txt.
   --help            : Displays this help menu.
 
 Options:
   --type            : Specifies the type of item to process (e.g., file, folder, .txt, .jpg, .zip).
                       Defaults to 'folder' for --report and 'file' for other commands.
-  --location        : Specifies a custom path for --report or --move (e.g., path=c:/app/duplicate).
+  --location        : Specifies a custom path for --report, --move, or --consolidate (e.g., path=c:/app/xxx).
   --name            : Specifies a specific file or folder name to filter operations.
   --cleanup         : When used with --report, generates an empty directories report only;
-                      when used with --delete, recursively deletes empty directories from the current directory.
+                      when used with --delete, recursively deletes empty directories from the base directory.
   --search-location : Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data).
                       If not provided, the current working directory is used.
                   
 IMPORTANT:
-• This script uses simple duplicate detection based on names. In real scenarios you might want to
-  compare file content (e.g. via a hash) to avoid false positives.
+• This script uses simple duplicate detection based on names.
 • Always test on noncritical data before using any file‐modifying operation.
 """
 
@@ -45,32 +45,34 @@ Usage: python duplicate_processor.py [command] [options]
 Commands:
   --report           Generates a report of duplicate files or folders.
                      Defaults to searching for folders if --type is not specified.
-  --move             Moves duplicate files or folders to a directory named 'duplicate'
-                     (created if it doesn't exist). If --location is provided, moves duplicates to the specified path.
+  --move             Moves duplicate files or folders to a directory.
   --move-out         Moves files (or the deepest folder) from nested directories to the current directory.
   --delete           Deletes duplicate files or folders in nested directories while keeping one unique copy.
+  --consolidate      Consolidates all .txt files into one file with unique data.
+                     This command only works with --type .txt.
   --help             Displays this help menu.
 
 Options:
   --type             Specifies the type of item to process (e.g., file, folder, .txt, .jpg, .zip).
                      Defaults to 'folder' for --report and 'file' for other commands.
-  --location         Specifies a custom path for --report or --move (e.g., path=c:/app/duplicate).
+  --location         Specifies a custom path for report, move, or consolidate (e.g., path=c:/app/xxx).
   --name             Specifies a specific file or folder name to filter operations.
   --cleanup          When used with --report, generates an empty directories report only;
                      when used with --delete, recursively deletes empty directories from the base directory.
   --search-location  Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data).
                      If not provided, the current working directory is used.
-                     
+
 Examples:
-  python duplicate_processor.py --report --type file --location path=c:/app/duplicate
+  python duplicate_processor.py --report --type file --location path=c:/app/reports
   python duplicate_processor.py --report
-  python duplicate_processor.py --move --type .txt --location path=c:/app/duplicate
+  python duplicate_processor.py --move --type .txt --location path=c:/app/xxx
   python duplicate_processor.py --move-out --type folder
   python duplicate_processor.py --delete --type .jpg
   python duplicate_processor.py --name myfile.txt --report
   python duplicate_processor.py --report --cleanup
   python duplicate_processor.py --delete --cleanup
-  python duplicate_processor.py --report --search-location path=/opt/var/data
+  python duplicate_processor.py --consolidate --type .txt --location path=c:/app/consolidated
+  python duplicate_processor.py --consolidate --type .txt --search-location path=/opt/var/data
     """
     print(help_text)
 
@@ -83,8 +85,6 @@ def parse_location(location_arg):
 def scan_files(base_dir, name_filter=None, ext_filter=None):
     """
     Recursively scan for files in base_dir.
-    If name_filter is provided, only include files that exactly match.
-    If ext_filter is provided (e.g., ".txt"), only include files with that extension.
     Returns a dictionary mapping filename to a list of full paths.
     """
     results = {}
@@ -101,7 +101,6 @@ def scan_files(base_dir, name_filter=None, ext_filter=None):
 def scan_folders(base_dir, name_filter=None):
     """
     Recursively scan for folders in base_dir.
-    If name_filter is provided, only include folders that exactly match.
     Returns a dictionary mapping folder name to a list of full paths.
     """
     results = {}
@@ -116,6 +115,7 @@ def scan_folders(base_dir, name_filter=None):
 def generate_report(duplicates, report_location):
     """
     Saves the duplicate dictionary as a JSON file to the report_location directory.
+    The default directory for reports is now 'reports'.
     If the report file exists, a new file is created with a timestamp appended.
     Also, a total count is added to the report.
     """
@@ -123,7 +123,6 @@ def generate_report(duplicates, report_location):
     base_filename = "duplicate_report.json"
     report_path = os.path.join(report_location, base_filename)
     
-    # If file exists, create a new file with timestamp appended.
     if os.path.exists(report_path):
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         base_filename = f"duplicate_report_{timestamp}.json"
@@ -144,11 +143,14 @@ def generate_report(duplicates, report_location):
 def move_duplicates(duplicates, destination, item_type):
     """
     Moves duplicates (all but the first occurrence in each group) to the destination folder.
-    Handles both files and folders.
+    Checks that the source exists before moving.
     """
     os.makedirs(destination, exist_ok=True)
     for name, paths in duplicates.items():
         for path in paths[1:]:
+            if not os.path.exists(path):
+                print(f"Source not found (already moved or deleted): {path}")
+                continue
             try:
                 dest_path = os.path.join(destination, os.path.basename(path))
                 if os.path.exists(dest_path):
@@ -162,34 +164,10 @@ def move_duplicates(duplicates, destination, item_type):
             except Exception as e:
                 print(f"Error moving {path}: {e}")
 
-def delete_duplicates(duplicates, item_type):
-    """
-    Deletes duplicates (all but the first occurrence in each group).
-    Uses os.remove for files and shutil.rmtree for folders.
-    """
-    for name, paths in duplicates.items():
-        # Keep the first occurrence; delete the rest.
-        for path in paths[1:]:
-            try:
-                if item_type == "folder":
-                    if os.path.exists(path):
-                        shutil.rmtree(path)
-                        print(f"Deleted folder: {path}")
-                    else:
-                        print(f"Folder not found (skipping deletion): {path}")
-                else:
-                    if os.path.exists(path):
-                        os.remove(path)
-                        print(f"Deleted file: {path}")
-                    else:
-                        print(f"File not found (skipping deletion): {path}")
-            except Exception as e:
-                print(f"Error deleting {path}: {e}")
-
 def move_out_files(base_dir):
     """
-    Moves all files from nested directories (i.e. not in the current directory) into the current directory.
-    If a conflict arises, a suffix is appended to the filename.
+    Moves all files from nested directories (i.e., not in the current directory) into the current directory.
+    Checks that the file exists before moving.
     """
     current_dir = os.getcwd()
     files_to_move = []
@@ -197,7 +175,9 @@ def move_out_files(base_dir):
         if os.path.abspath(root) == os.path.abspath(current_dir):
             continue
         for file in files:
-            files_to_move.append(os.path.join(root, file))
+            full_path = os.path.join(root, file)
+            if os.path.exists(full_path):
+                files_to_move.append(full_path)
     for file_path in files_to_move:
         try:
             dest_path = os.path.join(current_dir, os.path.basename(file_path))
@@ -214,8 +194,9 @@ def move_out_files(base_dir):
 
 def move_out_last_folder(base_dir):
     """
-    Finds the deepest (last) folder (relative to the current directory) that contains files
+    Finds the deepest folder (relative to the current directory) that contains files
     and moves it into the current directory.
+    Checks that the source exists before moving.
     """
     current_dir = os.getcwd()
     deepest_folder = None
@@ -230,6 +211,9 @@ def move_out_last_folder(base_dir):
                 max_depth = depth
                 deepest_folder = root
     if deepest_folder:
+        if not os.path.exists(deepest_folder):
+            print(f"Deepest folder not found (already moved or deleted): {deepest_folder}")
+            return
         try:
             dest_path = os.path.join(current_dir, os.path.basename(deepest_folder))
             if os.path.exists(dest_path):
@@ -258,7 +242,6 @@ def find_empty_directories(base_dir):
 def generate_empty_dir_report(empty_dirs, destination):
     """
     Generates a JSON report of empty directories.
-    Each entry includes the directory's name and its absolute location.
     If the report file exists, a new file is created with a timestamp appended.
     Also, a total count is added to the report.
     """
@@ -303,6 +286,51 @@ def delete_empty_directories_recursive(current_dir, base_dir):
         except Exception as e:
             print(f"Error deleting directory {current_dir}: {e}")
 
+def consolidate_txt_files(base_dir, destination):
+    """
+    Consolidates all .txt files (recursively) from base_dir into a single file.
+    Only unique file contents are included.
+    The consolidated file is written to the destination directory.
+    Naming follows the same timestamp logic as report files.
+    """
+    # Scan for all .txt files under base_dir.
+    files_dict = scan_files(base_dir, ext_filter=".txt")
+    unique_contents = set()
+    
+    for file_list in files_dict.values():
+        for file_path in file_list:
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read().strip()
+                        if content:
+                            unique_contents.add(content)
+                except Exception as e:
+                    print(f"Error reading {file_path}: {e}")
+    
+    if not unique_contents:
+        print("No text data found to consolidate.")
+        return
+
+    # Prepare consolidated content. Separate each unique file's content by two newlines.
+    consolidated_content = "\n\n".join(unique_contents)
+
+    os.makedirs(destination, exist_ok=True)
+    base_filename = "consolidated.txt"
+    consolidated_path = os.path.join(destination, base_filename)
+    
+    if os.path.exists(consolidated_path):
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        base_filename = f"consolidated_{timestamp}.txt"
+        consolidated_path = os.path.join(destination, base_filename)
+    
+    try:
+        with open(consolidated_path, "w", encoding="utf-8") as f:
+            f.write(consolidated_content)
+        print(f"Consolidated file generated at: {consolidated_path}")
+    except Exception as e:
+        print(f"Error writing consolidated file: {e}")
+
 def main():
     parser = argparse.ArgumentParser(add_help=False)
     group = parser.add_mutually_exclusive_group(required=True)
@@ -310,10 +338,11 @@ def main():
     group.add_argument("--move", action="store_true", help="Moves duplicate files or folders to a directory")
     group.add_argument("--move-out", action="store_true", help="Moves files (or the deepest folder) from nested directories to the current directory")
     group.add_argument("--delete", action="store_true", help="Deletes duplicate files or folders in nested directories")
+    group.add_argument("--consolidate", action="store_true", help="Consolidates all .txt files into one file with unique data (only works with --type .txt)")
     group.add_argument("--help", action="store_true", help="Displays this help menu")
 
     parser.add_argument("--type", type=str, help="Specifies the type of item to process (e.g., file, folder, .txt, .jpg, .zip)")
-    parser.add_argument("--location", type=str, help="Specifies a custom path for report or move (e.g., path=c:/app/duplicate)")
+    parser.add_argument("--location", type=str, help="Specifies a custom path for report, move, or consolidate (e.g., path=c:/app/xxx)")
     parser.add_argument("--name", type=str, help="Specifies a specific file or folder name to filter operations")
     parser.add_argument("--cleanup", action="store_true", help="If used with --report, generates an empty directories report only; if used with --delete, recursively deletes empty directories from the base directory")
     parser.add_argument("--search-location", type=str, help="Specifies the base directory for all operations (e.g., path=c:/app/abc or path=/opt/var/data). If not provided, the current working directory is used.")
@@ -327,7 +356,7 @@ def main():
     if args.cleanup and not (args.report or args.delete):
         print("Warning: The --cleanup option is only supported with --report and --delete commands. Ignoring --cleanup.")
 
-    # Use provided search-location if available; otherwise, use current working directory.
+    # Determine base directory for scanning.
     if args.search_location:
         base_dir = parse_location(args.search_location)
         if not os.path.isdir(base_dir):
@@ -353,13 +382,26 @@ def main():
 
     name_filter = args.name if args.name else None
 
-    if args.location:
-        destination = parse_location(args.location)
+    # For --report, default destination is the "reports" directory.
+    if args.report:
+        if args.location:
+            destination = parse_location(args.location)
+        else:
+            destination = os.path.join(os.getcwd(), "reports")
+    # For --consolidate, default destination is the "consolidated" directory.
+    elif args.consolidate:
+        if args.location:
+            destination = parse_location(args.location)
+        else:
+            destination = os.path.join(os.getcwd(), "consolidated")
+    # Otherwise, use location option if provided; else default to "duplicate" for move operations.
     else:
-        destination = os.path.join(os.getcwd(), "duplicate")
+        if args.location:
+            destination = parse_location(args.location)
+        else:
+            destination = os.path.join(os.getcwd(), "duplicate")
 
     if args.report:
-        # When both --report and --cleanup are provided, only generate the empty directories report.
         if args.cleanup:
             empty_dirs = find_empty_directories(base_dir)
             if empty_dirs:
@@ -376,7 +418,6 @@ def main():
                 generate_report(duplicates, destination)
             else:
                 print("No duplicates found.")
-
     elif args.move:
         if item_type == "folder":
             results = scan_folders(base_dir, name_filter)
@@ -387,7 +428,6 @@ def main():
             move_duplicates(duplicates, destination, item_type)
         else:
             print("No duplicates found to move.")
-    
     elif args.delete:
         if args.cleanup:
             delete_empty_directories_recursive(base_dir, base_dir)
@@ -398,15 +438,30 @@ def main():
                 results = scan_files(base_dir, name_filter, ext_filter)
             duplicates = {name: paths for name, paths in results.items() if len(paths) > 1}
             if duplicates:
-                delete_duplicates(duplicates, item_type)
+                for name, paths in duplicates.items():
+                    for path in paths[1:]:
+                        if not os.path.exists(path):
+                            print(f"Source not found (already moved or deleted): {path}")
+                            continue
+                        try:
+                            shutil.rmtree(path)
+                            print(f"Deleted folder: {path}")
+                        except Exception as e:
+                            print(f"Error deleting {path}: {e}")
             else:
                 print("No duplicates found to delete.")
-    
     elif args.move_out:
         if item_type == "folder":
             move_out_last_folder(base_dir)
         else:
             move_out_files(base_dir)
+    elif args.consolidate:
+        # The --consolidate command only supports --type .txt.
+        if not (args.type and args.type.lower() == ".txt"):
+            print("Error: The --consolidate command only supports --type .txt.")
+            print_help()
+            sys.exit(1)
+        consolidate_txt_files(base_dir, destination)
     else:
         print("Invalid command or option provided.")
         print_help()
